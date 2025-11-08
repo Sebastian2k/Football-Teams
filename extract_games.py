@@ -64,6 +64,6 @@ relevant_players = df_players[df_players['player_id'].isin(unique_player_ids)]
 # Create player_id to name map and save
 player_name_map = relevant_players.drop_duplicates(subset=['player_id']).set_index('player_id')['name'].to_dict()
 with open("player_names.json", 'w') as json_file:
-    json.dump(player_name_map, json_file, indent=4)
+    json.dump(player_name_map, json_file, indent=4, ensure_ascii=False)
 
 print("Player name mapping successfully saved to player_names.json")
