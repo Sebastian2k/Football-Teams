@@ -3,7 +3,23 @@ import pandas as pd
 from kagglehub import KaggleDatasetAdapter
 import json
 
-club_ids = {131, 418, 281, 985}  # Barcelona, Real Madrid, Man City, Man United
+# Clubs
+club_ids = {
+    131,  # FC Barcelona
+    418,  # Real Madrid
+    281,  # Man City
+    985,  # Man United
+    27,   # Bayern Munich
+    31,   # Liverpool FC
+    11,   # Arsenal FC
+    631,  # Chelsea FC
+    506,  # Juventus
+    5,    # AC Milan
+    46,   # Inter Milan
+    583,  # Paris Saint-Germain (PSG)
+    13,   # Atletico Madrid
+    16    # Borussia Dortmund
+}
 
 def load_games() -> pd.DataFrame:
     return kagglehub.dataset_load(
@@ -26,23 +42,24 @@ def load_players() -> pd.DataFrame:
         path="players.csv"
     )
 
-# Load Data
-print("Ładowanie danych...")
+# --- Load Data ---
+print("Loading data...")
 df_games = load_games()
 df_appearances = load_appearances()
 df_players = load_players()
 
-# Date Processing
+# --- Date Processing ---
 df_games['date'] = pd.to_datetime(df_games['date'], errors='coerce')
 df_appearances['date'] = pd.to_datetime(df_appearances['date'], errors='coerce')
 
-# Filter Games
+# --- Filter Games ---
+# Only matches between chosen clubs
 filtered_games = df_games[
     (df_games['home_club_id'].isin(club_ids)) &
     (df_games['away_club_id'].isin(club_ids))
 ]
 
-# Filter by date
+# Date range
 since_date = pd.to_datetime("2014-01-01")
 till_date = pd.to_datetime("2024-12-31")
 
@@ -53,11 +70,13 @@ filtered_games = filtered_games[
 
 filtered_game_ids = filtered_games['game_id'].unique()
 
-# Filter Appearances
+print(f"Found {len(filtered_games)} matches between selected clubs.")
+
+# --- Filter Appearances ---
 df_app_filtered = df_appearances[df_appearances['game_id'].isin(filtered_game_ids)]
 
-# FILE 1: matches.json
-print("Generowanie matches.json...")
+# --- FILE 1: matches.json ---
+print("Generating matches.json...")
 matches = {}
 
 for _, game in filtered_games.iterrows():
@@ -65,10 +84,8 @@ for _, game in filtered_games.iterrows():
     home_club_id = int(game['home_club_id'])
     away_club_id = int(game['away_club_id'])
 
-    # Get appearances only for this specific match
     current_game_apps = df_app_filtered[df_app_filtered['game_id'] == game_id]
 
-    # Split players into home and away teams based on player_club_id
     home_players = (
         current_game_apps[current_game_apps['player_club_id'] == home_club_id]['player_id']
         .dropna().astype(int).unique().tolist()
@@ -84,36 +101,33 @@ for _, game in filtered_games.iterrows():
         "home_team": {
             "club_id": home_club_id,
             "club_name": game.get('home_club_name'),
-            "players": home_players  # Lista ID piłkarzy gospodarzy
+            "players": home_players
         },
         "away_team": {
             "club_id": away_club_id,
             "club_name": game.get('away_club_name'),
-            "players": away_players  # Lista ID piłkarzy gości
+            "players": away_players
         }
     }
 
 with open("matches.json", "w", encoding="utf-8") as f:
     json.dump(matches, f, indent=4, ensure_ascii=False)
 
-print("Zapisano matches.json")
+print("Saved matches.json")
 
-# FILE 2: players.json
-print("Generowanie players.json...")
+# --- FILE 2: players.json (SIMPLE FORMAT) ---
+print("Generating players.json...")
 relevant_player_ids = df_app_filtered['player_id'].dropna().astype(int).unique()
 
-# Filter df_players to keep only relevant players and remove duplicates
 filtered_players_df = df_players[df_players['player_id'].isin(relevant_player_ids)].drop_duplicates(subset=['player_id'])
 
+# Simple dictionary: "ID": "Name"
 players = {}
 for _, row in filtered_players_df.iterrows():
-    pid = int(row['player_id'])
-    players[pid] = {
-        "name": row['name'],
-        "current_club_id": int(row['current_club_id']) if pd.notna(row.get('current_club_id')) else None
-    }
+    pid_str = str(int(row['player_id'])) # Convert ID to string for JSON key
+    players[pid_str] = row['name']
 
 with open("players.json", "w", encoding="utf-8") as f:
     json.dump(players, f, indent=4, ensure_ascii=False)
 
-print("Zapisano players.json")
+print("Saved players.json")
