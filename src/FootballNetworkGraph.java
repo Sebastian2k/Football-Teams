@@ -9,8 +9,8 @@ import org.json.JSONObject;
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
 import javax.swing.border.TitledBorder;
-import javax.swing.plaf.ColorUIResource;
 import java.awt.*;
+import java.awt.event.MouseListener;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -19,6 +19,7 @@ import java.util.List;
 
 public class FootballNetworkGraph extends JFrame {
 
+	private static final long serialVersionUID = 1L;
     private static final Color BG_COLOR = new Color(43, 43, 43);
     private static final Color PANEL_COLOR = new Color(60, 63, 65);
     private static final Color TEXT_COLOR = new Color(230, 230, 230);
@@ -27,8 +28,8 @@ public class FootballNetworkGraph extends JFrame {
     private JSONObject matchesJson;
     private JSONObject playersNamesJson;
     
-    private int minYear = 2024;
-    private int maxYear = 2000;
+    private int minYear = Integer.MAX_VALUE;
+    private int maxYear = Integer.MIN_VALUE;
 
     private Graph graph;
     private SwingViewer viewer;
@@ -36,6 +37,13 @@ public class FootballNetworkGraph extends JFrame {
 
     private JSlider yearSlider;
     private JLabel yearLabel;
+    
+    private JSlider weightMinSlider;
+    private JSlider weightMaxSlider;
+    private JLabel weightRangeLabel;
+    private JCheckBox showLonelyNodesBox;
+    private boolean isUpdatingSliders = false;
+    
     private JPanel clubsPanel;
     private JPanel playersPanel;
     
@@ -51,11 +59,16 @@ public class FootballNetworkGraph extends JFrame {
 
         setTitle("Evolution of Football Teams");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
-        setSize(1400, 900);
+        setSize(1400, 950);
         setLayout(new BorderLayout());
         getContentPane().setBackground(BG_COLOR);
 
         loadData();
+        
+        if (maxYear == Integer.MIN_VALUE) {
+             minYear = 2000;
+             maxYear = 2024;
+        }
         selectedYear = maxYear; 
 
         System.setProperty("org.graphstream.ui", "swing");
@@ -66,14 +79,21 @@ public class FootballNetworkGraph extends JFrame {
         viewer.enableAutoLayout();
         viewPanel = (ViewPanel) viewer.addDefaultView(false);
         
+        for (MouseListener ml : viewPanel.getMouseListeners()) viewPanel.removeMouseListener(ml);
+
         add(viewPanel, BorderLayout.CENTER);
 
         JPanel sidePanel = createSidePanel();
-        add(sidePanel, BorderLayout.WEST);
+        
+        JScrollPane sideScroll = new JScrollPane(sidePanel);
+        sideScroll.setBorder(null);
+        sideScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        sideScroll.getVerticalScrollBar().setUnitIncrement(16);
+        add(sideScroll, BorderLayout.WEST);
 
         populateClubList();    
         updatePlayerList();    
-        updateGraph();         
+        updateGraph(true); 
 
         setVisible(true);
     }
@@ -93,8 +113,8 @@ public class FootballNetworkGraph extends JFrame {
             UIManager.put("Label.foreground", TEXT_COLOR);
             UIManager.put("CheckBox.foreground", TEXT_COLOR);
             UIManager.put("TitledBorder.titleColor", new Color(100, 180, 255));
-        } catch (Exception e) {
-        }
+            UIManager.put("Slider.tickColor", TEXT_COLOR);
+        } catch (Exception e) { }
     }
 
     private void setupGraphStyle() {
@@ -121,10 +141,9 @@ public class FootballNetworkGraph extends JFrame {
     private JPanel createSidePanel() {
         JPanel panel = new JPanel();
         panel.setLayout(new BoxLayout(panel, BoxLayout.Y_AXIS));
-        panel.setPreferredSize(new Dimension(380, 0));
         panel.setBackground(PANEL_COLOR);
         panel.setBorder(new EmptyBorder(15, 15, 15, 15));
-
+        
         JPanel yearPanel = createSectionPanel("Year");
         yearLabel = new JLabel(String.valueOf(selectedYear));
         yearLabel.setFont(new Font("Segoe UI", Font.BOLD, 24));
@@ -140,7 +159,7 @@ public class FootballNetworkGraph extends JFrame {
                 selectedYear = yearSlider.getValue();
                 yearLabel.setText(String.valueOf(selectedYear));
                 updatePlayerList(); 
-                updateGraph();
+                updateGraph(true); 
             }
         });
         
@@ -150,7 +169,61 @@ public class FootballNetworkGraph extends JFrame {
         panel.add(yearPanel);
         panel.add(Box.createVerticalStrut(15));
 
-        JPanel clubsContainer = createSectionPanel("Clubs");
+        JPanel weightPanel = createSectionPanel("Matches played together (same or opposing team)");
+        weightRangeLabel = new JLabel("Range");
+        weightRangeLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
+        weightRangeLabel.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+
+        JLabel minLbl = new JLabel("Min:");
+        minLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        weightMinSlider = new JSlider(0, 10, 0);
+        weightMinSlider.setBackground(PANEL_COLOR);
+        
+        JLabel maxLbl = new JLabel("Max:");
+        maxLbl.setAlignmentX(Component.LEFT_ALIGNMENT);
+        weightMaxSlider = new JSlider(0, 10, 10);
+        weightMaxSlider.setBackground(PANEL_COLOR);
+
+        weightMinSlider.addChangeListener(e -> {
+            if (isUpdatingSliders) return;
+            if (weightMinSlider.getValue() > weightMaxSlider.getValue()) {
+                weightMaxSlider.setValue(weightMinSlider.getValue());
+            }
+            updateWeightLabel();
+            if (!weightMinSlider.getValueIsAdjusting()) updateGraph(false);
+        });
+
+        weightMaxSlider.addChangeListener(e -> {
+            if (isUpdatingSliders) return;
+            if (weightMaxSlider.getValue() < weightMinSlider.getValue()) {
+                weightMinSlider.setValue(weightMaxSlider.getValue());
+            }
+            updateWeightLabel();
+            if (!weightMaxSlider.getValueIsAdjusting()) updateGraph(false);
+        });
+
+        showLonelyNodesBox = new JCheckBox("Show players without connections");
+        showLonelyNodesBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+        showLonelyNodesBox.setBackground(PANEL_COLOR);
+        showLonelyNodesBox.setForeground(TEXT_COLOR);
+        showLonelyNodesBox.setFocusPainted(false);
+        showLonelyNodesBox.setSelected(false);
+        showLonelyNodesBox.addActionListener(e -> updateGraph(false));
+
+        weightPanel.add(weightRangeLabel);
+        weightPanel.add(Box.createVerticalStrut(5));
+        weightPanel.add(minLbl);
+        weightPanel.add(weightMinSlider);
+        weightPanel.add(maxLbl);
+        weightPanel.add(weightMaxSlider);
+        
+        weightPanel.add(Box.createVerticalStrut(15)); 
+        weightPanel.add(showLonelyNodesBox);
+        
+        panel.add(weightPanel);
+        panel.add(Box.createVerticalStrut(15));
+
+        JPanel clubsContainer = createSectionPanel("Teams");
         JButton toggleClubs = new JButton("Select/Deselect all");
         styleButton(toggleClubs);
         toggleClubs.addActionListener(e -> toggleAllClubs());
@@ -169,7 +242,7 @@ public class FootballNetworkGraph extends JFrame {
         panel.add(clubsContainer);
         panel.add(Box.createVerticalStrut(15));
 
-        JPanel playersContainer = createSectionPanel("Players");
+        JPanel playersContainer = createSectionPanel("Football players");
         JButton togglePlayers = new JButton("Select/Deselect visible");
         styleButton(togglePlayers);
         togglePlayers.addActionListener(e -> toggleAllPlayers());
@@ -190,22 +263,8 @@ public class FootballNetworkGraph extends JFrame {
         return panel;
     }
 
-    private JPanel createSectionPanel(String title) {
-        JPanel p = new JPanel();
-        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
-        p.setBackground(PANEL_COLOR);
-        TitledBorder border = BorderFactory.createTitledBorder(title);
-        border.setTitleFont(new Font("Segoe UI", Font.BOLD, 14));
-        border.setTitleColor(new Color(100, 180, 255));
-        p.setBorder(border);
-        return p;
-    }
-
-    private void styleButton(JButton btn) {
-        btn.setAlignmentX(Component.CENTER_ALIGNMENT);
-        btn.setBackground(ACCENT_COLOR);
-        btn.setForeground(Color.WHITE);
-        btn.setFocusPainted(false);
+    private void updateWeightLabel() {
+        weightRangeLabel.setText("Range: " + weightMinSlider.getValue() + " - " + weightMaxSlider.getValue());
     }
 
 
@@ -227,7 +286,6 @@ public class FootballNetworkGraph extends JFrame {
 
     private void populateClubList() {
         Set<String> allClubs = new TreeSet<>();
-        
         for (String matchId : matchesJson.keySet()) {
             JSONObject match = matchesJson.getJSONObject(matchId);
             allClubs.add(match.getJSONObject("home_team").getString("club_name"));
@@ -248,7 +306,7 @@ public class FootballNetworkGraph extends JFrame {
                 if (cb.isSelected()) selectedClubs.add(clubName);
                 else selectedClubs.remove(clubName);
                 updatePlayerList();
-                updateGraph();
+                updateGraph(true);
             });
             clubsPanel.add(cb);
             clubCheckBoxMap.put(clubName, cb);
@@ -291,7 +349,7 @@ public class FootballNetworkGraph extends JFrame {
             cb.addItemListener(e -> {
                 if (cb.isSelected()) selectedPlayers.add(pid);
                 else selectedPlayers.remove(pid);
-                updateGraph();
+                updateGraph(false); 
             });
             playersPanel.add(cb);
             playerCheckBoxMap.put(pid, cb);
@@ -310,7 +368,7 @@ public class FootballNetworkGraph extends JFrame {
         }
     }
 
-    private void updateGraph() {
+    private void updateGraph(boolean recalculateRange) {
         graph.clear();
         setupGraphStyle();
 
@@ -320,11 +378,9 @@ public class FootballNetworkGraph extends JFrame {
 
         for (String matchId : matchesJson.keySet()) {
             JSONObject match = matchesJson.getJSONObject(matchId);
-            
             if (!match.getString("date").startsWith(String.valueOf(selectedYear))) continue;
 
             List<Integer> matchPlayers = new ArrayList<>();
-            
             collectValidPlayers(match.getJSONObject("home_team"), matchPlayers);
             collectValidPlayers(match.getJSONObject("away_team"), matchPlayers);
 
@@ -338,23 +394,78 @@ public class FootballNetworkGraph extends JFrame {
             }
         }
 
-        for (Integer pid : selectedPlayers) {
-            String pidStr = String.valueOf(pid);
-            String name = playersNamesJson.optString(pidStr, pidStr);
-            Node n = graph.addNode(pidStr);
-            n.setAttribute("ui.label", name);
+        if (recalculateRange) {
+            int maxWeightFound = 0;
+            for (int w : pairCounts.values()) {
+                if (w > maxWeightFound) maxWeightFound = w;
+            }
+            if (maxWeightFound == 0) maxWeightFound = 1;
+
+            isUpdatingSliders = true;
+            weightMinSlider.setMinimum(0);
+            weightMinSlider.setMaximum(maxWeightFound);
+            weightMinSlider.setValue(0);
+
+            weightMaxSlider.setMinimum(0);
+            weightMaxSlider.setMaximum(maxWeightFound);
+            weightMaxSlider.setValue(maxWeightFound);
+
+            int spacing = Math.max(1, maxWeightFound / 5);
+            weightMinSlider.setMajorTickSpacing(spacing);
+            weightMaxSlider.setMajorTickSpacing(spacing);
+            
+            updateWeightLabel();
+            isUpdatingSliders = false;
         }
 
+        int filterMin = weightMinSlider.getValue();
+        int filterMax = weightMaxSlider.getValue();
+
+        Set<String> addedNodes = new HashSet<>();
+
         for (Map.Entry<String, Integer> entry : pairCounts.entrySet()) {
+            int weight = entry.getValue();
+
+            if (weight < filterMin || weight > filterMax) {
+                continue; 
+            }
+
             String[] ids = entry.getKey().split("_");
-            if (graph.getNode(ids[0]) != null && graph.getNode(ids[1]) != null) {
-                Edge e = graph.addEdge(entry.getKey(), ids[0], ids[1]);
-                if (entry.getValue() > 1) {
-                    e.setAttribute("ui.label", entry.getValue());
-                    e.setAttribute("ui.style", "size: " + Math.min(5, entry.getValue()) + "px;");
+            String p1 = ids[0];
+            String p2 = ids[1];
+
+            if (graph.getNode(p1) == null) addNodeToGraph(p1);
+            if (graph.getNode(p2) == null) addNodeToGraph(p2);
+            
+            addedNodes.add(p1);
+            addedNodes.add(p2);
+
+            Edge e = graph.addEdge(entry.getKey(), p1, p2);
+            if (e != null) {
+                if (weight > 0) {
+                    e.setAttribute("ui.label", weight);
+                    double thickness = 1 + (Math.min(10, weight) * 0.5);
+                    e.setAttribute("ui.style", "size: " + thickness + "px;");
                 }
             }
         }
+        
+        if (showLonelyNodesBox.isSelected()) {
+            for (Integer pid : selectedPlayers) {
+                String pidStr = String.valueOf(pid);
+                if (!addedNodes.contains(pidStr)) {
+                    if (graph.getNode(pidStr) == null) {
+                        addNodeToGraph(pidStr);
+                    }
+                }
+            }
+        }
+    }
+
+    private void addNodeToGraph(String pidStr) {
+        String name = playersNamesJson.optString(pidStr, pidStr);
+        Node n = graph.addNode(pidStr);
+        n.setAttribute("ui.label", name);
     }
 
     private void collectValidPlayers(JSONObject teamObj, List<Integer> targetList) {
@@ -368,6 +479,24 @@ public class FootballNetworkGraph extends JFrame {
                 }
             }
         }
+    }
+
+    private JPanel createSectionPanel(String title) {
+        JPanel p = new JPanel();
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setBackground(PANEL_COLOR);
+        TitledBorder border = BorderFactory.createTitledBorder(title);
+        border.setTitleFont(new Font("Segoe UI", Font.BOLD, 14));
+        border.setTitleColor(new Color(100, 180, 255));
+        p.setBorder(border);
+        return p;
+    }
+
+    private void styleButton(JButton btn) {
+        btn.setAlignmentX(Component.CENTER_ALIGNMENT);
+        btn.setBackground(ACCENT_COLOR);
+        btn.setForeground(Color.WHITE);
+        btn.setFocusPainted(false);
     }
 
     private void toggleAllClubs() {
