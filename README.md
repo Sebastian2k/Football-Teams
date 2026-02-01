@@ -20,3 +20,5 @@ The repository includes:
 - Guidelines for expanding the dataset, contributing, or replicating analyses for other clubs or time periods.
 
 This project is part of a group assignment for the PZE course at UKSW. All data processing is conducted in Python or Java, with justifications for language choices provided in the report. Data sources are always cited, and prompts for any AI tools used are included.
+
+[Report link](https://www.overleaf.com/read/rwspbjpjxjyx#64ebc5)
